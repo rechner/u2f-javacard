@@ -24,8 +24,11 @@ import javacard.security.*;
 import javacardx.apdu.ExtendedLength;
 
 public class U2FApplet extends Applet implements ExtendedLength {
+    private static final byte COUNTER_COUNT = 8;
+    private static final byte COUNTER_MASK = 7;
 
-    private Counter counter;
+    private Counter[] counters;
+    private byte next_counter;
     private Presence presence;
     private byte[] scratch;
     private byte[] attestationCertificate;
@@ -38,14 +41,12 @@ public class U2FApplet extends Applet implements ExtendedLength {
 
     private static final byte VERSION[] = { 'U', '2', 'F', '_', 'V', '2' };
 
-    private static final byte FIDO_CLA = (byte)0x00;
     private static final byte FIDO_INS_ENROLL = (byte)0x01;
     private static final byte FIDO_INS_SIGN = (byte)0x02;
     private static final byte FIDO_INS_VERSION = (byte)0x03;
     private static final byte ISO_INS_GET_DATA = (byte)0xC0;
     private static final byte FIDO2_INS_NFCCTAP_MSG = (byte)0x10;
 
-    private static final byte PROPRIETARY_CLA = (byte)0xF0;
     private static final byte FIDO_ADM_SET_ATTESTATION_CERT = (byte)0x01;
 
     private static final byte SCRATCH_TRANSPORT_STATE = (byte)0;
@@ -99,8 +100,20 @@ public class U2FApplet extends Applet implements ExtendedLength {
         if (parametersLength != 35) {
             ISOException.throwIt(ISO7816.SW_WRONG_DATA);
         }
-        counter = new Counter();
+
+        // Initialize with 8 counters.
+        counters = new Counter[] {
+            new Counter(), new Counter(),
+            new Counter(), new Counter(),
+            new Counter(), new Counter(),
+            new Counter(), new Counter()
+        };
+
+        // First counter is counter zero.
+        next_counter = 0;
+
         scratch = JCSystem.makeTransientByteArray((short)(SCRATCH_PAD + SCRATCH_PAD_SIZE), JCSystem.CLEAR_ON_DESELECT);
+
         try {
             // ok, let's save RAM
             localPrivateKey = (ECPrivateKey)KeyBuilder.buildKey(KeyBuilder.TYPE_EC_FP_PRIVATE_TRANSIENT_DESELECT, KeyBuilder.LENGTH_EC_FP_256, false);
@@ -118,8 +131,10 @@ public class U2FApplet extends Applet implements ExtendedLength {
                 Secp256r1.setCommonCurveParameters(localPrivateKey);
             }
         }
+
         attestationSignature = Signature.getInstance(Signature.ALG_ECDSA_SHA_256, false);
         localSignature = Signature.getInstance(Signature.ALG_ECDSA_SHA_256, false);
+
         byte flags = parameters[parametersOffset];
 
         if ((flags & INSTALL_FLAG_DISABLE_USER_PRESENCE) == 0) {
@@ -129,10 +144,13 @@ public class U2FApplet extends Applet implements ExtendedLength {
         }
 
         attestationCertificate = new byte[Util.getShort(parameters, (short)(parametersOffset + 1))];
+
+        // Set up our attestation signature object.
         ECPrivateKey attestationPrivateKey = (ECPrivateKey) KeyBuilder.buildKey(KeyBuilder.TYPE_EC_FP_PRIVATE, KeyBuilder.LENGTH_EC_FP_256, false);
         Secp256r1.setCommonCurveParameters(attestationPrivateKey);
         attestationPrivateKey.setS(parameters, (short)(parametersOffset + 3), (short)32);
         attestationSignature.init(attestationPrivateKey, Signature.MODE_SIGN);
+
         fidoImpl = new FIDOStandalone();
     }
 
@@ -155,8 +173,8 @@ public class U2FApplet extends Applet implements ExtendedLength {
         short len = apdu.setIncomingAndReceive();
         short dataOffset = apdu.getOffsetCdata();
         boolean extendedLength = (dataOffset != ISO7816.OFFSET_CDATA);
-        short outOffset;
 
+        // The length of this command must always be 64 bytes.
         if (len != 64) {
             ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
         }
@@ -165,20 +183,28 @@ public class U2FApplet extends Applet implements ExtendedLength {
         presence.enforce_user_presence();
 
         // Generate the key pair
-        if (localPrivateTransient) {
-            Secp256r1.setCommonCurveParameters(localPrivateKey);
-        }
-        short keyHandleLength = fidoImpl.generateKeyAndWrap(buffer, (short)(dataOffset + APDU_APPLICATION_PARAMETER_OFFSET), localPrivateKey, scratch, SCRATCH_PUBLIC_KEY_OFFSET, scratch, SCRATCH_KEY_HANDLE_OFFSET);
+        short keyHandleLength = fidoImpl.generateKeyAndWrap(
+            buffer,
+            (short)(dataOffset + APDU_APPLICATION_PARAMETER_OFFSET),
+            scratch,
+            SCRATCH_PUBLIC_KEY_OFFSET,
+            scratch,
+            SCRATCH_KEY_HANDLE_OFFSET,
+            (byte)(next_counter++ & COUNTER_MASK)
+        );
+
         scratch[SCRATCH_PAD] = ENROLL_LEGACY_VERSION;
         scratch[SCRATCH_KEY_HANDLE_LENGTH_OFFSET] = (byte)keyHandleLength;
+
         // Prepare the attestation
         attestationSignature.update(RFU_ENROLL_SIGNED_VERSION, (short)0, (short)1);
         attestationSignature.update(buffer, (short)(dataOffset + APDU_APPLICATION_PARAMETER_OFFSET), (short)32);
         attestationSignature.update(buffer, (short)(dataOffset + APDU_CHALLENGE_OFFSET), (short)32);
         attestationSignature.update(scratch, SCRATCH_KEY_HANDLE_OFFSET, keyHandleLength);
         attestationSignature.update(scratch, SCRATCH_PUBLIC_KEY_OFFSET, (short)65);
-        outOffset = (short)(ENROLL_PUBLIC_KEY_OFFSET + 65 + 1 + keyHandleLength);
+
         short signatureSize = attestationSignature.sign(buffer, (short)0, (short)0, scratch, SCRATCH_SIGNATURE_OFFSET);
+        short outOffset = (short)(ENROLL_PUBLIC_KEY_OFFSET + 65 + 1 + keyHandleLength);
 
         if (extendedLength) {
             // If using extended length, the message can be completed and sent immediately
@@ -211,30 +237,40 @@ public class U2FApplet extends Applet implements ExtendedLength {
         short keyHandleLength;
         boolean extendedLength = (dataOffset != ISO7816.OFFSET_CDATA);
         short outOffset = SCRATCH_PAD;
+
         if (len < 65) {
             ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
         }
+
         switch(p1) {
-        case P1_ENFORCE_PRESENCE_AND_SIGN:
-            sign = true;
-            enforce_presence = true;
-            break;
-        case P1_IGNORE_PRESENCE_AND_SIGN:
-            sign = true;
-            break;
-        case P1_SIGN_CHECK_ONLY:
-            break;
-        default:
-            ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
+            case P1_ENFORCE_PRESENCE_AND_SIGN:
+                sign = true;
+                enforce_presence = true;
+                break;
+            case P1_IGNORE_PRESENCE_AND_SIGN:
+                sign = true;
+                break;
+            case P1_SIGN_CHECK_ONLY:
+                break;
+            default:
+                ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
         }
-        // Verify key handle
+
         if (localPrivateTransient) {
             Secp256r1.setCommonCurveParameters(localPrivateKey);
         }
+
         keyHandleLength = (short)(buffer[(short)(dataOffset + 64)] & 0xff);
-        if (!fidoImpl.unwrap(buffer, (short)(dataOffset + 65), keyHandleLength, buffer, (short)(dataOffset + APDU_APPLICATION_PARAMETER_OFFSET), (sign ? localPrivateKey : null))) {
-            ISOException.throwIt(FIDO_SW_INVALID_KEY_HANDLE);
-        }
+
+        // Verify key handle, unwrap our private
+        // key, and get our counter index. This
+        // will throw a ISO7816.SW_WRONG_DATA if
+        // the key handle is bad.
+        byte counter_index = fidoImpl.unwrap(
+            buffer, (short)(dataOffset + 65), keyHandleLength,
+            buffer, (short)(dataOffset + APDU_APPLICATION_PARAMETER_OFFSET),
+            (sign ? localPrivateKey : null)
+        );
 
         // If not signing, return with the "correct" exception
         if (!sign) {
@@ -242,20 +278,28 @@ public class U2FApplet extends Applet implements ExtendedLength {
         }
 
         if (enforce_presence) {
+            // This will either wait for user presence to be
+            // asserted or throw ISO7816.SW_CONDITIONS_NOT_SATISFIED.
             scratch[outOffset++] = presence.enforce_user_presence();
         } else {
+            // This version returns immediately and never
+            // throws an exception. The returned value will
+            // indicate user presence if it makes sense for
+            // this authenticator.
             scratch[outOffset++] = presence.check_user_presence();
         }
 
-        // Increase the signature counter
+        // Increase the signature counter and write it to scratch
+        Counter counter = counters[counter_index & COUNTER_MASK];
         counter.inc();
-
         outOffset = counter.writeValue(scratch, outOffset);
 
+        // Create our signature.
         localSignature.init(localPrivateKey, Signature.MODE_SIGN);
         localSignature.update(buffer, (short)(dataOffset + APDU_APPLICATION_PARAMETER_OFFSET), (short)32);
         localSignature.update(scratch, SCRATCH_PAD, (short)5);
         outOffset += localSignature.sign(buffer, (short)(dataOffset + APDU_CHALLENGE_OFFSET), (short)32, scratch, outOffset);
+
         if (extendedLength) {
             // If using extended length, the message can be completed and sent immediately
             scratch[SCRATCH_TRANSPORT_STATE] = TRANSPORT_EXTENDED;
