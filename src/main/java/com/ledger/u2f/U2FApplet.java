@@ -339,6 +339,14 @@ public class U2FApplet extends Applet implements ExtendedLength {
         }
         short requestedSize = apdu.setOutgoing();
         short outOffset = (short)0;
+
+        if (requestedSize == 0) {
+            requestedSize = (short)buffer.length;
+            if (requestedSize > 0xFF) {
+                requestedSize = 256;
+            }
+        }
+
         if (scratch[SCRATCH_TRANSPORT_STATE] == TRANSPORT_NOT_EXTENDED) {
             short dataSize = Util.getShort(scratch, SCRATCH_NONCERT_LENGTH);
             short blockSize = ((short)(dataSize - currentOffset) > requestedSize ? requestedSize : (short)(dataSize - currentOffset));
