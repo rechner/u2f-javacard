@@ -29,6 +29,7 @@ public class U2FApplet extends Applet implements ExtendedLength {
 
     private Counter[] counters;
     private byte next_counter;
+    private byte flags;
     private Presence presence;
     private byte[] scratch;
     private byte[] attestationCertificate;
@@ -46,6 +47,8 @@ public class U2FApplet extends Applet implements ExtendedLength {
     private static final byte FIDO_INS_VERSION = (byte)0x03;
     private static final byte ISO_INS_GET_DATA = (byte)0xC0;
     private static final byte FIDO2_INS_NFCCTAP_MSG = (byte)0x10;
+
+    private static final byte FIDO_INS_RESET_ATTEST = (byte)0x55;
 
     private static final byte FIDO_ADM_SET_ATTESTATION_CERT = (byte)0x01;
 
@@ -89,6 +92,7 @@ public class U2FApplet extends Applet implements ExtendedLength {
     private static final short FIDO_SW_INVALID_KEY_HANDLE = ISO7816.SW_WRONG_DATA;
 
     private static final byte INSTALL_FLAG_DISABLE_USER_PRESENCE = (byte)0x01;
+    private static final byte INSTALL_FLAG_ALLOW_RESET_ATTEST = (byte)0x02;
 
     private static final byte CTAP1_ERR_INVALID_COMMAND = (byte)0x01;
 
@@ -135,7 +139,7 @@ public class U2FApplet extends Applet implements ExtendedLength {
         attestationSignature = Signature.getInstance(Signature.ALG_ECDSA_SHA_256, false);
         localSignature = Signature.getInstance(Signature.ALG_ECDSA_SHA_256, false);
 
-        byte flags = parameters[parametersOffset];
+        flags = parameters[parametersOffset];
 
         if ((flags & INSTALL_FLAG_DISABLE_USER_PRESENCE) == 0) {
             presence = new OneShotPresence();
@@ -166,6 +170,57 @@ public class U2FApplet extends Applet implements ExtendedLength {
         if ((short)(copyOffset + len) == (short)attestationCertificate.length) {
             attestationCertificateSet = true;
         }
+    }
+
+    private static boolean isProtocolContactless(byte protocol) {
+        switch ((byte) (protocol & APDU.PROTOCOL_MEDIA_MASK)) {
+            case APDU.PROTOCOL_MEDIA_CONTACTLESS_TYPE_A:
+            case APDU.PROTOCOL_MEDIA_CONTACTLESS_TYPE_B:
+            case -80: // APDU.PROTOCOL_MEDIA_CONTACTLESS_TYPE_F
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private void handleResetAttest(APDU apdu) {
+        if ((flags & INSTALL_FLAG_ALLOW_RESET_ATTEST) == 0) {
+            ISOException.throwIt(ISO7816.SW_INS_NOT_SUPPORTED);
+        }
+
+        byte[] buffer = apdu.getBuffer();
+        short len = apdu.setIncomingAndReceive();
+        short dataOffset = apdu.getOffsetCdata();
+
+        if (len != 34) {
+            ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
+        }
+
+        if (isProtocolContactless(APDU.getProtocol())) {
+            // Busy work to force a delay.
+            // This is around 10 seconds on a J3H145.
+            for (short i1 = 0; i1 != 130 ; i1++) {
+                attestationSignature.sign(buffer, dataOffset, len, scratch, SCRATCH_SIGNATURE_OFFSET);
+            }
+        }
+
+        JCSystem.beginTransaction();
+        {
+            short certLen = Util.getShort(buffer, dataOffset);
+            if (certLen != (short) attestationCertificate.length) {
+                attestationCertificate = new byte[Util.getShort(buffer, dataOffset)];
+            }
+            attestationCertificateSet = false;
+
+            // Set up our attestation signature object.
+            ECPrivateKey attestationPrivateKey = (ECPrivateKey) KeyBuilder.buildKey(KeyBuilder.TYPE_EC_FP_PRIVATE, KeyBuilder.LENGTH_EC_FP_256, false);
+            Secp256r1.setCommonCurveParameters(attestationPrivateKey);
+            attestationPrivateKey.setS(buffer, (short) (dataOffset + 2), (short) 32);
+            attestationSignature.init(attestationPrivateKey, Signature.MODE_SIGN);
+        }
+        JCSystem.commitTransaction();
+
+        JCSystem.requestObjectDeletion();
     }
 
     private void handleEnroll(APDU apdu) throws ISOException {
@@ -418,6 +473,10 @@ public class U2FApplet extends Applet implements ExtendedLength {
                     && buffer[ISO7816.OFFSET_INS] == FIDO_ADM_SET_ATTESTATION_CERT
             ) {
                 handleSetAttestationCert(apdu);
+            } else if ((buffer[ISO7816.OFFSET_CLA] & (byte)0x80) == (byte)0x00
+                    && buffer[ISO7816.OFFSET_INS] == FIDO_INS_RESET_ATTEST
+            ) {
+                handleResetAttest(apdu);
             } else {
                 ISOException.throwIt(ISO7816.SW_INS_NOT_SUPPORTED);
             }
@@ -443,6 +502,9 @@ public class U2FApplet extends Applet implements ExtendedLength {
                     break;
                 case ISO_INS_GET_DATA:
                     handleGetData(apdu);
+                    break;
+                case FIDO_INS_RESET_ATTEST:
+                    handleResetAttest(apdu);
                     break;
                 default:
                     ISOException.throwIt(ISO7816.SW_INS_NOT_SUPPORTED);
