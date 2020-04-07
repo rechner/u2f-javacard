@@ -183,6 +183,22 @@ public class U2FApplet extends Applet implements ExtendedLength {
         }
     }
 
+    // Typical calibration values:
+    //
+    //  * J3R3xx: 24
+    //  * J3H145: 19
+    //
+    private static final byte securityDelayCalibration = 19;
+    private void securityDelay(short ds) {
+        // Busy work.
+        for (; ds != 0 ; ds--) {
+			for (byte i1 = securityDelayCalibration; i1 != 0 ; i1--) {
+				for (byte i2 = (byte)0x80; i2 != 0 ; i2--) {
+				}
+			}
+        }
+    }
+
     private void handleResetAttest(APDU apdu) {
         if ((flags & INSTALL_FLAG_ALLOW_RESET_ATTEST) == 0) {
             ISOException.throwIt(ISO7816.SW_INS_NOT_SUPPORTED);
@@ -197,11 +213,8 @@ public class U2FApplet extends Applet implements ExtendedLength {
         }
 
         if (isProtocolContactless(APDU.getProtocol())) {
-            // Busy work to force a delay.
-            // This is around 10 seconds on a J3H145.
-            for (short i1 = 0; i1 != 130 ; i1++) {
-                attestationSignature.sign(buffer, dataOffset, len, scratch, SCRATCH_SIGNATURE_OFFSET);
-            }
+            // Force a delay of 10 seconds.
+            securityDelay((short)100);
         }
 
         JCSystem.beginTransaction();
