@@ -1,7 +1,24 @@
-Ledger U2F Applet
-=================
+Customized U2F Applet
+=====================
 
-[![Build status](https://travis-ci.org/LedgerHQ/ledger-u2f-javacard.svg?branch=master)](https://travis-ci.org/LedgerHQ/ledger-u2f-javacard) [![Codecov](https://img.shields.io/codecov/c/github/ledgerhq/ledger-u2f-javacard.svg)](https://codecov.io/gh/ledgerhq/ledger-u2f-javacard)
+This is a fork of the [Ledger U2F Applet](https://github.com/LedgerHQ/ledger-u2f-javacard) that is focused on privacy and compatability. It has several unique features:
+
+* Still works with JC 3.0.1 cards.
+* Supports iOS via NFC, by [working around a bug in Apple's FIDO2 implementation](https://github.com/darconeous/u2f-javacard/commit/8b58c4cdcae295977306d895c7d5afd7c5628a22).
+* [Multiple counters (8)](https://github.com/darconeous/u2f-javacard/commit/554b0718cddf1eccc575bede16fb3f32cc44707e), which are assigned to registrations in a round-robin fashion.
+* [EEPROM wear-leveling for counters](https://github.com/darconeous/u2f-javacard/commit/c2f223d69300a4227d8865b72b3d72158191afd6)
+* [Supports "dont-enforce-user-presence-and-sign"](https://github.com/darconeous/u2f-javacard/commit/24b6f13f8c221771df6f087530574d222a71d6a1).
+
+This fork also [fixes some problems with Extended APDUs](https://github.com/darconeous/u2f-javacard/commit/7a7dcc7329405061bce430061584a20724ff1eda) that is [present in the upstream version](https://github.com/LedgerHQ/ledger-u2f-javacard/pull/13).
+
+If you want to just get a CAP file and install it, you can find it in the [releases section](https://github.com/darconeous/u2f-javacard/releases). Check the assets for the release, there should be a `U2FApplet.cap` and a `U2FApplet.cap.gpg`. The cap file is signed with [my public gpg key](https://keybase.io/darconeous).
+
+Once you have a CAP file, you can use [this script](https://gist.github.com/darconeous/adb1b2c4b15d3d8fbc72a5097270cdaf) to install using [GlobalPlatformPro](https://github.com/martinpaljak/GlobalPlatformPro).
+
+What follows below is from the original project README, with a few edits for things that have clearly changed.
+
+--------------------------------------
+
 
 # Overview
 
@@ -21,7 +38,7 @@ Either load the CAP file using your favorite third party software or refer to [F
  
 The following install parameters are expected : 
 
-  - 1 byte flag : provide 01 to pass the current [Fido NFC interoperability tests](https://github.com/google/u2f-ref-code/tree/master/u2f-tests), or 00 
+  - 1 byte flag : provide 01 to pass the current [Fido NFC interoperability tests](https://github.com/google/u2f-ref-code/tree/master/u2f-tests), or 00 *(You almost certainly want to pass in 00)*
   - 2 bytes length (big endian encoded) : length of the attestation certificate to load, supposed to be using a private key on the P-256 curve 
   - 32 bytes : private key of the attestation certificate 
 
@@ -29,7 +46,7 @@ Before using the applet, the attestation certificate shall be loaded using a pro
 
 | CLA | INS | P1            | P2           | Data                    |
 | --- | --- | ------------- | ------------ | ----------------------- |
-| F0  | 01  | offset (high) | offset (low) | Certificate data chunk  | 
+| 80  | 01  | offset (high) | offset (low) | Certificate data chunk  | 
 
 # Testing on Android 
 
@@ -47,5 +64,5 @@ This application is licensed under [Apache 2.0](http://www.apache.org/licenses/L
 
 # Contact
 
-Please contact hello@ledger.fr for any question
+~~Please contact hello@ledger.fr for any question~~
 
