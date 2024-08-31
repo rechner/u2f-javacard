@@ -25,6 +25,9 @@ final def libsSdk = rootPath + '/libs-sdks'
 repositories {
     mavenCentral()
     // mavenLocal() // for local maven repository if needed
+    maven {
+           url "https://javacard.pro/maven"
+        }
     flatDir {
         dirs libs
     }
@@ -80,7 +83,7 @@ javacard {
 
             //noinspection GroovyAssignabilityCheck
             dependencies {
-                remote 'fr.bmartel:gplatform:2.1.1'
+                remote 'org.globalplatform:javacard:1.1'
             }
         }
     }

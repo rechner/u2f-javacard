@@ -28,8 +28,11 @@ It uses no proprietary vendor API and is freely available on [Ledger Unplugged](
 
 # Building 
 
+  - Install Java 8: `sudo apt install openjdk-8-jre openjdk-8-jdk`
+  - Sync submodules to fetch deps: `git submodule update`
   - Set the environment variable `JC_HOME` to the folder containg the [Java Card Development Kit 3.0.2](http://www.oracle.com/technetwork/java/embedded/javacard/downloads/index.html)
-  - Run `gradlew convertJavacard`
+  - Run `./gradlew convertJavaCard`
+    - NB: you may need to set `JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64/`
 
 # Installing 
 
